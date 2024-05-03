@@ -75,7 +75,7 @@ fn run_testlines() {
     let lines = JsonLinesRecv::spawn_new(input);
     for line in lines {
         match line {
-            Ok(ln) => println!("{}:\n==> {ln}", ln.key.path_to(Path::new("~")).display()),
+            Ok(ln) => println!("{}:\n==> {ln}", ln.key().path_to(Path::new("~")).display()),
             Err(e) => println!("ERR: {e:?}"),
         }
     }

@@ -33,16 +33,19 @@ impl OutputThreadPool {
         }
     }
     pub fn write_line(&mut self, ln: LineData) {
-        let tx = self.active_files.entry(ln.key.clone()).or_insert_with(|| {
-            let path = ln.key.path_to(&self.root_dir);
-            println!("Creating {}", path.display());
-            let (tx, rx) = kanal::unbounded();
-            let output_file = std::fs::File::create(path).unwrap();
-            self.pool.spawn(move || {
-                output_task(rx, output_file);
+        let tx = self
+            .active_files
+            .entry(ln.key().clone())
+            .or_insert_with(|| {
+                let path = ln.key().path_to(&self.root_dir);
+                println!("Creating {}", path.display());
+                let (tx, rx) = kanal::unbounded();
+                let output_file = std::fs::File::create(path).unwrap();
+                self.pool.spawn(move || {
+                    output_task(rx, output_file);
+                });
+                tx
             });
-            tx
-        });
 
         tx.send(ln).unwrap();
     }
@@ -145,7 +148,7 @@ fn output_task(rx: Receiver<LineData>, out: std::fs::File) {
                     tokio::time::sleep(Duration::from_nanos(1)).await;
                 }
             } else {
-                enc.write_all(ln.orig.as_bytes()).unwrap();
+                enc.write_all(ln.original_line_text().as_bytes()).unwrap();
 
                 let enc_buf = std::mem::replace(enc.get_mut(), vec![]);
                 if enc_buf.len() > 0 {
