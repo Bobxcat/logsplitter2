@@ -60,15 +60,15 @@ impl OutputThreadPool {
             loop {
                 const TIMEOUT: Duration = Duration::from_millis(10_000);
                 if tx.is_empty() {
-                    println!("Closed one down!");
                     tx.close();
                     break;
                 } else if start.elapsed() > TIMEOUT {
-                    // panic!("Timeout elapsed when trying to call `OutputThreadPool::finish`. Timeout was {TIMEOUT:?}")
+                    panic!("Timeout elapsed when trying to call `OutputThreadPool::finish`. Timeout was {TIMEOUT:?}")
                 }
             }
         }
         self.pool.join();
+        println!("Closed down all active threads successfully!")
     }
 }
 
@@ -140,7 +140,6 @@ fn output_task(rx: Receiver<LineData>, out: std::fs::File) {
 
                 loop {
                     if tx_encoded.is_closed() {
-                        println!("CLOSED");
                         return;
                     }
                     // For some reason, `tokio::task::yield_now()` didn't work.

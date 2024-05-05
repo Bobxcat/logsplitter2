@@ -1,15 +1,18 @@
 use std::{
-    io::Write,
+    fs::File,
+    io::{sink, stdout, Write},
     path::{Path, PathBuf},
     time::Duration,
 };
 
 use input::JsonLinesRecv;
 use output::OutputThreadPool;
+use testdata_gen::{generate_testdata, TestdataCfg};
 
 mod data;
 mod input;
 mod output;
+mod testdata_gen;
 mod thread_pool;
 
 #[derive(Debug, Clone)]
@@ -81,6 +84,33 @@ fn run_testlines() {
     }
 }
 
+fn run_generated(cfg: TestdataCfg) {
+    let path_input = Path::new("./example_sets/rand/input.json.gz");
+    let path_input_dbg = Path::new("./example_sets/rand/input.json");
+    let path_output = Path::new("./example_sets/rand/out/");
+
+    std::fs::create_dir_all(path_output).unwrap();
+
+    generate_testdata(
+        cfg,
+        &mut File::create(path_input).unwrap(),
+        &mut File::create(path_input_dbg).unwrap(),
+    )
+    .unwrap();
+
+    println!("Testdata generated!");
+
+    run(RunCfg {
+        input_file: path_input.into(),
+        output_dir: path_output.into(),
+        output_threads: 10,
+    })
+}
+
 fn main() {
-    run_input1();
+    // run_input1();
+    run_generated(TestdataCfg {
+        lines: 100_000,
+        ..Default::default()
+    })
 }
