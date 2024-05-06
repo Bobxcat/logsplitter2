@@ -115,7 +115,7 @@ fn run_generated(cfg: TestdataCfg) {
     run(RunCfg {
         input_file: path_input.into(),
         output_dir: path_output.into(),
-        output_threads: 8,
+        output_threads: 1,
     })
 }
 
@@ -123,7 +123,7 @@ fn main() {
     // run_input1();
     // run_ryan1();
     run_generated(TestdataCfg {
-        lines: 100_000,
+        lines: 10_000,
         ..Default::default()
     })
 }

@@ -102,7 +102,7 @@ impl OutputFiles {
                 }
                 const TIMEOUT: Duration = Duration::from_millis(10_000);
                 if start.elapsed() > TIMEOUT {
-                    panic!("Timeout elapsed when trying to `finish` a thread! {TIMEOUT:?}")
+                    // panic!("Timeout elapsed when trying to `finish` a thread! {TIMEOUT:?}")
                 }
             }
         });

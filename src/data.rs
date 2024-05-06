@@ -49,11 +49,13 @@ impl MsgKey {
         let name = format!("{}_{}_{}", r.info_meta_service, r.info_meta_env, date);
         let mut hasher = HashBuilder::default().build();
         name.hash(&mut hasher);
+
         Self {
             name: Arc::from(name.as_str()),
             hash: hasher.finish(),
         }
     }
+
     pub fn path_to(&self, root: &Path) -> PathBuf {
         let mut p = root.join(&*self.name);
         p.set_extension("json.gz");
