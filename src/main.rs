@@ -6,7 +6,7 @@ use std::{
 };
 
 use input::JsonLinesRecv;
-use output::{OutputFiles, OutputThreadPool};
+use output::OutputFiles;
 use tempdir::TempDir;
 use testdata_gen::{generate_testdata, TestdataCfg};
 
