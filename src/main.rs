@@ -6,11 +6,14 @@ use std::{
 };
 
 use input::JsonLinesRecv;
-use output::OutputThreadPool;
+use output::{OutputFiles, OutputThreadPool};
+use tempdir::TempDir;
 use testdata_gen::{generate_testdata, TestdataCfg};
 
 mod data;
+mod file_pool;
 mod input;
+mod math_utils;
 mod output;
 mod testdata_gen;
 mod thread_pool;
@@ -49,7 +52,8 @@ pub fn run(cfg: RunCfg) {
     let input = std::fs::File::open(cfg.input_file).unwrap();
     let lines = JsonLinesRecv::spawn_new(input);
 
-    let mut output = OutputThreadPool::new(cfg.output_threads, cfg.output_dir);
+    let mut output = OutputFiles::new(cfg.output_threads, 128, cfg.output_dir);
+    // let mut output = OutputThreadPool::new(cfg.output_threads, cfg.output_dir);
 
     for line in lines {
         let line = match line {
@@ -108,9 +112,9 @@ fn run_generated(cfg: TestdataCfg) {
 }
 
 fn main() {
-    // run_input1();
-    run_generated(TestdataCfg {
-        lines: 100_000,
-        ..Default::default()
-    })
+    run_input1();
+    // run_generated(TestdataCfg {
+    //     lines: 100_000,
+    //     ..Default::default()
+    // })
 }

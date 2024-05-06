@@ -16,4 +16,7 @@ impl ThreadPool {
             h.join().unwrap();
         }
     }
+    pub fn active_threads(&self) -> usize {
+        self.handles.len()
+    }
 }
