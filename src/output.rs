@@ -12,10 +12,9 @@ use kanal::{Receiver, Sender};
 use tokio_uring::fs::File;
 
 use crate::{
-    data::{LineData, MsgKey},
+    data::{LineData, MsgKey, MsgKeyMap},
     file_pool::FilePool,
     math_utils,
-    thread_pool::ThreadPool,
 };
 
 /// Sent from main thread to output writing thread
@@ -35,7 +34,7 @@ struct ThreadInfo {
 pub struct OutputFiles {
     threads: Vec<ThreadInfo>,
     /// The thread which each `MsgKey` will be routed to
-    msgkey_assigned: HashMap<MsgKey, usize>,
+    msgkey_assigned: MsgKeyMap<usize>,
     /// The thread which most recently had a new `MsgKey` assigned to it
     last_thread_with_new_file: usize,
 }
@@ -51,7 +50,7 @@ impl OutputFiles {
             .into_iter()
             .map(|max_files| {
                 let root_dir = root_dir.clone();
-                let (tx, rx) = kanal::bounded(100);
+                let (tx, rx) = kanal::bounded(256);
                 let h = std::thread::spawn(move || {
                     let files = FilePool::new(max_files, root_dir);
                     tokio_uring::start(async move { output_thread(rx, files).await })
@@ -62,7 +61,7 @@ impl OutputFiles {
 
         Self {
             threads,
-            msgkey_assigned: HashMap::new(),
+            msgkey_assigned: Default::default(),
             last_thread_with_new_file: 0,
         }
     }
@@ -91,6 +90,8 @@ impl OutputFiles {
         threads
             .iter()
             .for_each(|t| t.tx.send(OutputThreadMsg::Finish).unwrap());
+
+        println!("Waiting for thread channels to flush...");
 
         threads.iter().for_each(|t| {
             let start = Instant::now();
@@ -134,11 +135,14 @@ async fn output_thread(rx: Receiver<OutputThreadMsg>, mut files: FilePool) {
                 for (key, enc) in encoders {
                     let to_write = enc.finish().unwrap();
 
-                    let mut f = files.take(key).await;
+                    let mut f = files.take(key.clone()).await;
                     f.write_all(to_write).await.unwrap();
+                    files.give(key, f);
                 }
 
-                assert!(files.has_no_idle_or_inactive_files());
+                files.finish().await;
+
+                assert!(files.has_no_file_handles());
                 rx.close();
                 return;
             }

@@ -5,7 +5,7 @@ use std::{
 
 use tokio_uring::fs::{File, OpenOptions};
 
-use crate::data::MsgKey;
+use crate::data::{MsgKey, MsgKeyMap, MsgKeySet};
 
 /// A `FilePool` file that is open.
 /// Any `FilePoolEntry` items should be returned to their `FilePool` instead of being dropped
@@ -49,9 +49,9 @@ pub struct FilePool {
     /// When a file must be temporarily closed to stay under the `max_open_files`,
     /// the idle file at the front of this queue will be chosen
     idle_files_queue: VecDeque<MsgKey>,
-    idle_files: HashMap<MsgKey, FilePoolEntry>,
-    taken_files: HashSet<MsgKey>,
-    inactive_files: HashMap<MsgKey, FilePoolEntryInactive>,
+    idle_files: MsgKeyMap<FilePoolEntry>,
+    taken_files: MsgKeySet,
+    inactive_files: MsgKeyMap<FilePoolEntryInactive>,
 }
 
 impl FilePool {
@@ -66,16 +66,16 @@ impl FilePool {
             inactive_files: Default::default(),
         }
     }
-    /// Returns whether or not every file in this pool is taken.
-    /// When this pool is dropped, this should be true
-    pub fn has_no_idle_or_inactive_files(&self) -> bool {
-        self.inactive_files.len() == 0 && self.idle_files.len() == 0
+
+    /// Returns `true` iff no file handles are being kept by this pool
+    ///
+    /// Before dropping this pool, this should return `true`
+    pub fn has_no_file_handles(&self) -> bool {
+        self.idle_files.len() == 0
     }
+
     fn open_files(&self) -> usize {
         self.idle_files.len() + self.taken_files.len()
-    }
-    fn taken_files(&self) -> usize {
-        self.taken_files.len()
     }
 
     /// Pops the top of `self.idle_files_queue`, and flushes that file.
@@ -83,8 +83,7 @@ impl FilePool {
     ///
     /// Panics:
     /// * If there is no file which can be closed
-    #[track_caller]
-    fn close_file(&mut self) {
+    async fn close_file(&mut self) {
         let to_close_key = self
             .idle_files_queue
             .pop_front()
@@ -94,22 +93,21 @@ impl FilePool {
             file: to_close,
         } = self.idle_files.remove(&to_close_key).expect("unreachable!");
         // NOTE: dropping a `tokio_uring` file does not ensure all data is written to disk!
-        tokio_uring::start(async move {
-            to_close.sync_all().await.unwrap();
-            to_close.close().await.unwrap();
-        });
+        to_close.sync_all().await.unwrap();
+        to_close.close().await.unwrap();
 
         let inactive = FilePoolEntryInactive { cursor };
         assert!(self.inactive_files.insert(to_close_key, inactive).is_none())
     }
 
     /// Tries to take the given file, creating a new file if it didn't exist.
-    /// The returned `FilePoolEntry` **must** be given back (using [`give`](FilePool::give)) if it's possible that
+    /// The returned `FilePoolEntry` **must** be given back (using [`give`](FilePool::give)).
+    ///
+    /// Dropping files must be done via the [`finish`](FilePool::finish) method
     ///
     /// Panics:
     /// * If the file is already taken
     /// * If taking this file would mean exceeding the `max_open_files` specified when creating this file pool
-    #[track_caller]
     pub async fn take(&mut self, to_take: MsgKey) -> FilePoolEntry {
         assert!(
             !self.taken_files.contains(&to_take),
@@ -139,7 +137,7 @@ impl FilePool {
             // This file needs to be re-opened
 
             if self.open_files() >= self.max_open_files {
-                self.close_file();
+                self.close_file().await;
             }
 
             let FilePoolEntryInactive { cursor } = self.inactive_files.remove(&to_take).unwrap();
@@ -153,7 +151,7 @@ impl FilePool {
             // A new file must be created
 
             if self.open_files() >= self.max_open_files {
-                self.close_file();
+                self.close_file().await;
             }
 
             let path = to_take.path_to(&self.root);
@@ -176,5 +174,11 @@ impl FilePool {
         // NOTE: this operation will not change `self.open_files()`, since we are removing from `taken` and adding to `idle`
         assert!(self.idle_files.insert(key.clone(), entry).is_none());
         self.idle_files_queue.push_back(key);
+    }
+    pub async fn finish(&mut self) {
+        for _i in 0..self.idle_files.len() {
+            self.close_file().await;
+        }
+        assert!(self.idle_files.is_empty());
     }
 }

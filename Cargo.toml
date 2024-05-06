@@ -16,6 +16,7 @@ tempdir = "0.3.7"
 tokio = { version = "1.37.0", features = ["time"] }
 tokio-uring = "0.4.0"
 utf8-decode = "1.0.1"
+xxhash-rust = { version = "0.8.10", features = ["xxh3"] }
 
 [profile.release]
 opt-level = 3

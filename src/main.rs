@@ -1,8 +1,6 @@
 use std::{
     fs::File,
-    io::{sink, stdout, Write},
     path::{Path, PathBuf},
-    time::Duration,
 };
 
 use input::JsonLinesRecv;
@@ -16,7 +14,6 @@ mod input;
 mod math_utils;
 mod output;
 mod testdata_gen;
-mod thread_pool;
 
 #[derive(Debug, Clone)]
 pub enum ReadError {
@@ -31,6 +28,7 @@ pub enum ErrorKind {
 
 #[derive(Debug, Clone)]
 pub struct Error {
+    #[allow(unused)]
     kind: Box<ErrorKind>,
 }
 
@@ -49,10 +47,12 @@ pub struct RunCfg {
 }
 
 pub fn run(cfg: RunCfg) {
+    std::fs::create_dir_all(&cfg.output_dir).unwrap();
+
     let input = std::fs::File::open(cfg.input_file).unwrap();
     let lines = JsonLinesRecv::spawn_new(input);
 
-    let mut output = OutputFiles::new(cfg.output_threads, 128, cfg.output_dir);
+    let mut output = OutputFiles::new(cfg.output_threads, 64, cfg.output_dir);
     // let mut output = OutputThreadPool::new(cfg.output_threads, cfg.output_dir);
 
     for line in lines {
@@ -72,7 +72,15 @@ fn run_input1() {
     run(RunCfg {
         input_file: "./example_sets/input1.json.gz".try_into().unwrap(),
         output_dir: "./example_sets/out/".try_into().unwrap(),
-        output_threads: 10,
+        output_threads: 8,
+    })
+}
+
+fn run_ryan1() {
+    run(RunCfg {
+        input_file: "./example_sets/ryan1.json.gz".try_into().unwrap(),
+        output_dir: "./example_sets/out_ryan1/".try_into().unwrap(),
+        output_threads: 8,
     })
 }
 
@@ -107,14 +115,15 @@ fn run_generated(cfg: TestdataCfg) {
     run(RunCfg {
         input_file: path_input.into(),
         output_dir: path_output.into(),
-        output_threads: 10,
+        output_threads: 8,
     })
 }
 
 fn main() {
-    run_input1();
-    // run_generated(TestdataCfg {
-    //     lines: 100_000,
-    //     ..Default::default()
-    // })
+    // run_input1();
+    // run_ryan1();
+    run_generated(TestdataCfg {
+        lines: 100_000,
+        ..Default::default()
+    })
 }

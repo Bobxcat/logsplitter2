@@ -47,7 +47,7 @@ impl Iterator for JsonLinesRecv {
 async fn reading_input(input: File, tx: Sender<String>) {
     // Sender for the raw file data
     // IMPORTANT: Empty vector indicates EOI
-    let (tx_encoded, rx_encoded) = kanal::bounded_async::<Vec<u8>>(10_000);
+    let (tx_encoded, rx_encoded) = kanal::bounded_async::<Vec<u8>>(100);
 
     let _h = tokio_uring::spawn(async move {
         let mut cursor = 0;

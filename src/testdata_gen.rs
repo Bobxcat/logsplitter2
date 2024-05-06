@@ -1,7 +1,9 @@
 use std::io::Write;
 
-use chrono::{NaiveDate, NaiveDateTime};
+use chrono::{NaiveDate, NaiveDateTime, TimeDelta};
 use flate2::{write::GzEncoder, Compression};
+
+use crate::math_utils;
 
 use self::gen_format::FullLine;
 
@@ -9,19 +11,27 @@ use self::gen_format::FullLine;
 pub struct TestdataCfg {
     pub lines: usize,
     pub compression: Compression,
-    /// All dates generated will fall within this range, with no guarantee
-    pub date_range: std::ops::Range<NaiveDate>,
+    /// The number of unique dates which will be generated
+    pub unique_dates: usize,
+    pub date_start: NaiveDate,
+    /// The approximate distance between two days
+    pub date_delta: TimeDelta,
 }
 
 impl TestdataCfg {
     #[track_caller]
     pub fn set_start_date(&mut self, y: i32, m: u32, d: u32) -> &mut Self {
-        self.date_range.start = NaiveDate::from_ymd_opt(y, m, d).unwrap();
+        self.date_start = NaiveDate::from_ymd_opt(y, m, d).unwrap();
         self
     }
     #[track_caller]
-    pub fn set_end_date(&mut self, y: i32, m: u32, d: u32) -> &mut Self {
-        self.date_range.end = NaiveDate::from_ymd_opt(y, m, d).unwrap();
+    pub fn set_date_delta(&mut self, days: i64) -> &mut Self {
+        self.date_delta = TimeDelta::days(days);
+        self
+    }
+    #[track_caller]
+    pub fn set_unique_dates(&mut self, n: usize) -> &mut Self {
+        self.unique_dates = n;
         self
     }
 }
@@ -31,9 +41,13 @@ impl Default for TestdataCfg {
         let mut s = Self {
             lines: 0,
             compression: Default::default(),
-            date_range: Default::default(),
+            unique_dates: 0,
+            date_start: Default::default(),
+            date_delta: Default::default(),
         };
-        s.set_start_date(2024, 10, 20).set_end_date(2026, 3, 3);
+        s.set_start_date(2024, 10, 20)
+            .set_date_delta(3)
+            .set_unique_dates(300);
         s
     }
 }
@@ -62,10 +76,25 @@ pub fn generate_testdata(
 ) -> Result<(), std::io::Error> {
     let mut enc = GzEncoder::new(w_enc, Compression::default());
 
-    for _l in 0..cfg.lines {
-        let ln = format!("{}\n", FullLine::generate(&cfg).to_json());
+    let mut num_messages_per_day = math_utils::get_even_partition(cfg.unique_dates, cfg.lines);
+    let mut curr_day = cfg.date_start;
+    // {
+    //     let num_days = (cfg.date_range.end - cfg.date_range.start).num_days();
+    //     let day = thread_rng().gen_range(0..num_days);
+    //     let day = cfg.date_range.start + Duration::days(day);
+    // }
+
+    for _ in 0..cfg.lines {
+        let ln = format!("{}\n", FullLine::generate(&cfg, curr_day).to_json());
         enc.write_all(ln.as_bytes())?;
         w_dbg.write_all(ln.as_bytes())?;
+
+        if num_messages_per_day[0] == 0 {
+            num_messages_per_day.swap_remove(0);
+            curr_day += cfg.date_delta;
+        }
+
+        num_messages_per_day[0] -= 1;
     }
 
     enc.finish()?;
@@ -124,11 +153,7 @@ mod gen_format {
     }
 
     impl Timestamp {
-        pub fn gen(cfg: &TestdataCfg) -> Self {
-            let num_days = (cfg.date_range.end - cfg.date_range.start).num_days();
-            let day = thread_rng().gen_range(0..num_days);
-            let day = cfg.date_range.start + Duration::days(day);
-
+        pub fn gen(_cfg: &TestdataCfg, day: NaiveDate) -> Self {
             let time_secs = thread_rng().gen_range(-86_399..=86_399);
             let time = FixedOffset::west_opt(time_secs).unwrap();
             let time = NaiveTime::from_hms_opt(0, 0, 0).unwrap() + time;
@@ -204,7 +229,7 @@ mod gen_format {
 
     impl FullLine {
         /// Generates a random line given the context
-        pub fn generate(cfg: &TestdataCfg) -> Self {
+        pub fn generate(cfg: &TestdataCfg, date: NaiveDate) -> Self {
             let msg_len = thread_rng().gen_range(10..100);
             Self {
                 message: thread_rng()
@@ -212,7 +237,7 @@ mod gen_format {
                     .take(msg_len)
                     .map(char::from)
                     .collect(),
-                timestamp: Timestamp::gen(cfg),
+                timestamp: Timestamp::gen(cfg, date),
                 level: thread_rng().gen(),
                 meta: Meta::gen(cfg),
             }
