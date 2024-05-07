@@ -32,6 +32,7 @@ impl FilePoolEntry {
 
 struct FilePoolEntryInactive {
     cursor: usize,
+    closing_task: tokio::task::JoinHandle<std::io::Result<()>>,
 }
 
 /// Represents a pool of files with a limit on how many can be open at once
@@ -92,11 +93,17 @@ impl FilePool {
             cursor,
             file: to_close,
         } = self.idle_files.remove(&to_close_key).expect("unreachable!");
-        // NOTE: dropping a `tokio_uring` file does not ensure all data is written to disk!
-        to_close.sync_all().await.unwrap();
-        to_close.close().await.unwrap();
+        let h = tokio_uring::spawn(async move {
+            // NOTE: dropping a `tokio_uring` file does not ensure all data is written to disk!
+            to_close.sync_all().await?;
+            to_close.close().await?;
+            Ok(())
+        });
 
-        let inactive = FilePoolEntryInactive { cursor };
+        let inactive = FilePoolEntryInactive {
+            cursor,
+            closing_task: h,
+        };
         assert!(self.inactive_files.insert(to_close_key, inactive).is_none())
     }
 
@@ -140,7 +147,13 @@ impl FilePool {
                 self.close_file().await;
             }
 
-            let FilePoolEntryInactive { cursor } = self.inactive_files.remove(&to_take).unwrap();
+            let FilePoolEntryInactive {
+                cursor,
+                closing_task,
+            } = self.inactive_files.remove(&to_take).unwrap();
+
+            // Make sure the file gets properly flushed before re-opening
+            closing_task.await.unwrap().unwrap();
 
             let path = to_take.path_to(&self.root);
             let file = OpenOptions::new().write(true).open(path).await.unwrap();
@@ -178,6 +191,9 @@ impl FilePool {
     pub async fn finish(&mut self) {
         for _i in 0..self.idle_files.len() {
             self.close_file().await;
+        }
+        for (_, entry) in self.inactive_files.drain() {
+            entry.closing_task.await.unwrap().unwrap();
         }
         assert!(self.idle_files.is_empty());
     }

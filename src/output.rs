@@ -1,6 +1,6 @@
 use std::{
     collections::{HashMap, VecDeque},
-    io::Write,
+    io::{Read, Write},
     path::PathBuf,
     sync::{Arc, Mutex},
     thread::JoinHandle,
@@ -9,9 +9,9 @@ use std::{
 
 use flate2::{write::GzEncoder, Compression};
 use kanal::{Receiver, Sender};
-use tokio_uring::fs::File;
 
 use crate::{
+    byte_channel::{self, BytesRx, BytesTx},
     data::{LineData, MsgKey, MsgKeyMap},
     file_pool::FilePool,
     math_utils,
@@ -82,7 +82,7 @@ impl OutputFiles {
             .unwrap();
     }
 
-    pub fn finish(&mut self) {
+    fn finish(&mut self) {
         println!("Started finishing output files...");
 
         let threads = self.threads.drain(..).collect::<Vec<_>>();
@@ -124,7 +124,8 @@ impl Drop for OutputFiles {
 /// The `files` parameter here should be empty
 async fn output_thread(rx: Receiver<OutputThreadMsg>, mut files: FilePool) {
     let rx = rx.as_async();
-    let mut encoders: HashMap<MsgKey, GzEncoder<Vec<u8>>> = HashMap::new();
+    let mut encoders: HashMap<MsgKey, (flate2::write::GzEncoder<BytesTx>, BytesRx)> =
+        HashMap::new();
 
     loop {
         match rx.recv().await.expect(
@@ -132,8 +133,65 @@ async fn output_thread(rx: Receiver<OutputThreadMsg>, mut files: FilePool) {
             `Finish` should have been sent",
         ) {
             OutputThreadMsg::Finish => {
-                for (key, enc) in encoders {
-                    let to_write = enc.finish().unwrap();
+                for (key, mut enc) in encoders {
+                    enc.0.flush().unwrap();
+
+                    let mut to_write = vec![];
+                    while let Some(b) = enc.1.try_recv() {
+                        to_write.push(b);
+                    }
+
+                    let mut f = files.take(key.clone()).await;
+                    f.write_all(to_write).await.unwrap();
+                    files.give(key, f);
+                }
+
+                files.finish().await;
+
+                assert!(files.has_no_file_handles());
+                rx.close();
+                return;
+            }
+            OutputThreadMsg::Write { ln } => {
+                let key = ln.key().clone();
+                let mut f = files.take(key.clone()).await;
+                let enc = encoders.entry(key.clone()).or_insert_with(|| {
+                    let (tx, rx) = byte_channel::bounded(16);
+                    (GzEncoder::new(tx, Compression::default()), rx)
+                });
+                enc.0.write_all(ln.original_line_text().as_bytes()).unwrap();
+
+                let mut to_write = vec![];
+                while let Some(b) = enc.1.try_recv() {
+                    to_write.push(b);
+                }
+                if to_write.len() > 0 {
+                    f.write_all(to_write).await.unwrap();
+                }
+
+                files.give(key, f);
+            }
+        }
+    }
+}
+
+/// The `files` parameter here should be empty
+async fn output_thread_old(rx: Receiver<OutputThreadMsg>, mut files: FilePool) {
+    let rx = rx.as_async();
+    let mut encoders: HashMap<MsgKey, GzEncoder<VecDeque<u8>>> = HashMap::new();
+
+    loop {
+        match rx.recv().await.expect(
+            "Main thread closed unexpectedly! /
+            `Finish` should have been sent",
+        ) {
+            OutputThreadMsg::Finish => {
+                for (key, mut enc) in encoders {
+                    enc.flush().unwrap();
+
+                    let mut to_write = vec![];
+                    let written = enc.read_to_end(&mut to_write).unwrap();
+                    to_write.truncate(written);
 
                     let mut f = files.take(key.clone()).await;
                     f.write_all(to_write).await.unwrap();
@@ -151,12 +209,16 @@ async fn output_thread(rx: Receiver<OutputThreadMsg>, mut files: FilePool) {
                 let mut f = files.take(key.clone()).await;
                 let enc = encoders
                     .entry(key.clone())
-                    .or_insert_with(|| GzEncoder::new(vec![], Compression::default()));
+                    .or_insert_with(|| GzEncoder::new(Default::default(), Compression::default()));
                 enc.write_all(ln.original_line_text().as_bytes()).unwrap();
-                if enc.get_ref().len() >= 1024 {
-                    let to_write = std::mem::replace(enc.get_mut(), vec![]);
+
+                let mut to_write = vec![0; 1024];
+                let written = enc.read(&mut to_write).unwrap();
+                to_write.truncate(written);
+                if to_write.len() > 0 {
                     f.write_all(to_write).await.unwrap();
                 }
+
                 files.give(key, f);
             }
         }

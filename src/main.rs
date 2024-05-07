@@ -1,6 +1,8 @@
 use std::{
     fs::File,
+    io::{stdout, Write},
     path::{Path, PathBuf},
+    time::Instant,
 };
 
 use input::JsonLinesRecv;
@@ -8,6 +10,7 @@ use output::OutputFiles;
 use tempdir::TempDir;
 use testdata_gen::{generate_testdata, TestdataCfg};
 
+mod byte_channel;
 mod data;
 mod file_pool;
 mod input;
@@ -49,13 +52,15 @@ pub struct RunCfg {
 pub fn run(cfg: RunCfg) {
     std::fs::create_dir_all(&cfg.output_dir).unwrap();
 
+    let start = Instant::now();
+
     let input = std::fs::File::open(cfg.input_file).unwrap();
     let lines = JsonLinesRecv::spawn_new(input);
 
     let mut output = OutputFiles::new(cfg.output_threads, 64, cfg.output_dir);
-    // let mut output = OutputThreadPool::new(cfg.output_threads, cfg.output_dir);
 
     for line in lines {
+        // println!("LINE");
         let line = match line {
             Ok(l) => l,
             Err(ReadError::EndOfInputReached) => {
@@ -66,6 +71,16 @@ pub fn run(cfg: RunCfg) {
 
         output.write_line(line);
     }
+
+    stdout().flush().unwrap();
+    println!("ELAPSED: {:?}", start.elapsed());
+    stdout().flush().unwrap();
+
+    std::mem::drop(output);
+
+    stdout().flush().unwrap();
+    println!("ELAPSED (total): {:?}", start.elapsed());
+    stdout().flush().unwrap();
 }
 
 fn run_input1() {
@@ -115,7 +130,7 @@ fn run_generated(cfg: TestdataCfg) {
     run(RunCfg {
         input_file: path_input.into(),
         output_dir: path_output.into(),
-        output_threads: 1,
+        output_threads: 8,
     })
 }
 
@@ -123,7 +138,7 @@ fn main() {
     // run_input1();
     // run_ryan1();
     run_generated(TestdataCfg {
-        lines: 10_000,
+        lines: 6_000,
         ..Default::default()
     })
 }
